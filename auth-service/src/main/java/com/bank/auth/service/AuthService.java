@@ -1,0 +1,149 @@
+package com.bank.auth.service;
+
+import com.bank.auth.dto.AuthResponse;
+import com.bank.auth.dto.LoginRequest;
+import com.bank.auth.dto.LoginResponse;
+import com.bank.auth.dto.RegisterRequest;
+import com.bank.auth.dto.RegisterResponse;
+import com.bank.auth.entity.AuthUser;
+import com.bank.auth.exception.BadRequestException;
+import com.bank.auth.exception.ResourceNotFoundException;
+import com.bank.auth.repository.AuthUserRepository;
+import com.bank.auth.util.JwtUtil;
+import com.bank.auth.util.ValidationUtil;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.HashMap;
+import java.util.Map;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class AuthService {
+
+    private final AuthUserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final JwtUtil jwtUtil;
+    private final RestTemplate restTemplate;
+    
+    @Value("${user-service.url:http://localhost:8082/api}")
+    private String userServiceUrl;
+
+    public RegisterResponse register(RegisterRequest request) {
+        log.info("Registering user: {}", request.getUsername());
+        
+        // Validate input fields
+        ValidationUtil.validateUsername(request.getUsername());
+        ValidationUtil.validateEmail(request.getEmail());
+        ValidationUtil.validatePassword(request.getPassword());
+        
+        // Check if username already exists
+        if (userRepository.existsByUsername(request.getUsername())) {
+            throw new BadRequestException("Username already exists");
+        }
+        
+        // Set default role to USER if not provided
+        String role = request.getRole() != null ? request.getRole().toUpperCase() : "USER";
+        
+        // Validate role
+        if (!role.equals("USER") && !role.equals("ADMIN")) {
+            throw new BadRequestException("Role must be either USER or ADMIN");
+        }
+        
+        // Check if trying to create ADMIN when one already exists
+        if (role.equals("ADMIN")) {
+            long adminCount = userRepository.countByRole("ADMIN");
+            if (adminCount >= 1) {
+                throw new BadRequestException("Only one ADMIN user is allowed in the system");
+            }
+        }
+
+        String encryptedPassword = passwordEncoder.encode(request.getPassword());
+        
+        AuthUser user = new AuthUser();
+        user.setUsername(request.getUsername());
+        user.setPassword(encryptedPassword);
+        user.setEmail(request.getEmail());
+        user.setRole(role);
+        
+        AuthUser savedUser = userRepository.save(user);
+        
+        // Step 2: Create user profile in user-service
+        try {
+            Map<String, Object> userProfileData = new HashMap<>();
+            userProfileData.put("firstName", request.getFirstName() != null && !request.getFirstName().isEmpty() ? request.getFirstName() : "User");
+            userProfileData.put("lastName", request.getLastName() != null && !request.getLastName().isEmpty() ? request.getLastName() : request.getUsername());
+            userProfileData.put("email", request.getEmail());
+            userProfileData.put("phone", "0000000000");
+            
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            // Add admin role header for authorization
+            headers.set("X-User-Roles", "ADMIN");
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(userProfileData, headers);
+            
+            String userServiceEndpoint = userServiceUrl + "/users";
+            log.info("Creating user profile at: {}", userServiceEndpoint);
+            
+            Map<String, Object> userServiceResponse = restTemplate.postForObject(userServiceEndpoint, entity, Map.class);
+            log.info("User profile created in user-service: {}", userServiceResponse);
+        } catch (Exception e) {
+            log.error("Failed to create user profile in user-service: {}", e.getMessage(), e);
+            // Don't fail the registration if user-service is unavailable
+        }
+        
+        RegisterResponse response = new RegisterResponse(savedUser.getUsername(), encryptedPassword);
+        response.setUserId(savedUser.getId());
+        response.setMessage("User registered successfully");
+        return response;
+    }
+
+    public LoginResponse login(LoginRequest request) {
+        log.info("Login attempt for user: {}", request.getUsername());
+        
+        // Validate input
+        ValidationUtil.validateNotEmpty(request.getUsername(), "Username");
+        ValidationUtil.validateNotEmpty(request.getPassword(), "Password");
+        
+        AuthUser user = userRepository.findByUsername(request.getUsername())
+                .orElseThrow(() -> new ResourceNotFoundException("Invalid credentials"));
+
+        if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
+            throw new BadRequestException("Invalid credentials");
+        }
+
+        String token = jwtUtil.generateToken(user.getUsername(), user.getRole(), user.getId());
+        LoginResponse response = new LoginResponse(token, user.getUsername(), user.getPassword());
+        response.setUserId(user.getId());
+        return response;
+    }
+
+    public boolean validateToken(String token) {
+        ValidationUtil.validateNotEmpty(token, "Token");
+        return jwtUtil.validateToken(token);
+    }
+
+    public java.util.List<Map<String, Object>> getAllUsers() {
+        log.info("Fetching all users from auth database");
+        java.util.List<AuthUser> authUsers = userRepository.findAll();
+        
+        return authUsers.stream().map(user -> {
+            Map<String, Object> userMap = new HashMap<>();
+            userMap.put("id", user.getId());
+            userMap.put("username", user.getUsername());
+            userMap.put("email", user.getEmail());
+            userMap.put("role", user.getRole());
+            userMap.put("firstName", user.getUsername()); // Use username as firstName for now
+            userMap.put("lastName", "");
+            return userMap;
+        }).collect(java.util.stream.Collectors.toList());
+    }
+}

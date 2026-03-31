@@ -1,0 +1,62 @@
+package com.bank.auth.util;
+
+import io.jsonwebtoken.*;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
+import java.util.List;
+
+@Component
+public class JwtUtil {
+
+    @Value("${jwt.secret}")
+    private String secret;
+
+    @Value("${jwt.expiration}")
+    private long expiration;
+
+    private SecretKey getSigningKey() {
+        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public String generateToken(String username, String role, Long userId) {
+        // subject must be userId (as string) so the gateway can forward X-User-Id
+        // roles must be an array so the gateway can forward X-User-Roles
+        return Jwts.builder()
+                .setSubject(String.valueOf(userId))                // ✅ sub = userId
+                .claim("username", username)
+                .claim("roles", List.of(role))                     // ✅ roles = ["ADMIN"] or ["USER"]
+                .setIssuedAt(new Date())
+                .setExpiration(new Date(System.currentTimeMillis() + expiration))
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
+                .compact();
+    }
+
+    public boolean validateToken(String token) {
+        try {
+            Jwts.parserBuilder().setSigningKey(getSigningKey()).build().parseClaimsJws(token);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // Optional helpers (align with new claims)
+    public String extractUsername(String token) {
+        return getClaims(token).get("username", String.class);
+    }
+    public List<String> extractRoles(String token) {
+        return getClaims(token).get("roles", List.class);
+    }
+    public Long extractUserId(String token) {
+        String sub = getClaims(token).getSubject();
+        try { return Long.valueOf(sub); } catch (Exception e) { return null; }
+    }
+    private Claims getClaims(String token) {
+        return Jwts.parserBuilder().setSigningKey(getSigningKey()).build().parseClaimsJws(token).getBody();
+    }
+}

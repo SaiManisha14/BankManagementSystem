@@ -1,0 +1,122 @@
+package com.bank.transaction.controller;
+
+import com.bank.transaction.entity.Transaction;
+import com.bank.transaction.enums.TransactionType;
+import com.bank.transaction.service.TransactionService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+
+import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+class TransactionControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockBean
+    private TransactionService transactionService;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    private Transaction transaction;
+
+    @BeforeEach
+    void setUp() {
+        transaction = new Transaction();
+        transaction.setTransactionId(1L);
+        transaction.setAccountId(1L);
+        transaction.setAmount(BigDecimal.valueOf(1000));
+        transaction.setTransactionType(TransactionType.DEPOSIT);
+    }
+
+    @Test
+    void getAllTransactions_ShouldReturnTransactions_WhenAdminRole() throws Exception {
+        when(transactionService.getAllTransactions()).thenReturn(Arrays.asList(transaction));
+        
+        mockMvc.perform(get("/api/transactions")
+                .header("X-User-Roles", "ADMIN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].transactionId").value(1));
+    }
+
+    @Test
+    void getAllTransactions_ShouldReturnForbidden_WhenUserRole() throws Exception {
+        mockMvc.perform(get("/api/transactions")
+                .header("X-User-Roles", "USER"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getTransactionsByAccountId_ShouldReturnTransactions() throws Exception {
+        when(transactionService.getTransactionsByAccountId(1L)).thenReturn(Arrays.asList(transaction));
+        
+        mockMvc.perform(get("/api/transactions/account/1")
+                .header("X-User-Roles", "USER"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].transactionId").value(1));
+    }
+
+    @Test
+    void deposit_ShouldReturnTransaction() throws Exception {
+        when(transactionService.deposit(any(Long.class), any(BigDecimal.class))).thenReturn(transaction);
+        
+        Map<String, Object> request = new HashMap<>();
+        request.put("accountId", 1);
+        request.put("amount", 1000);
+        
+        mockMvc.perform(post("/api/transactions/deposit")
+                .header("X-User-Roles", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void withdraw_ShouldReturnTransaction() throws Exception {
+        when(transactionService.withdraw(any(Long.class), any(BigDecimal.class))).thenReturn(transaction);
+        
+        Map<String, Object> request = new HashMap<>();
+        request.put("accountId", 1);
+        request.put("amount", 500);
+        
+        mockMvc.perform(post("/api/transactions/withdraw")
+                .header("X-User-Roles", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void transfer_ShouldReturnTransaction() throws Exception {
+        when(transactionService.transfer(any(Long.class), any(Long.class), any(BigDecimal.class))).thenReturn(transaction);
+        
+        Map<String, Object> request = new HashMap<>();
+        request.put("fromAccountId", 1);
+        request.put("toAccountId", 2);
+        request.put("amount", 300);
+        
+        mockMvc.perform(post("/api/transactions/transfer")
+                .header("X-User-Roles", "USER")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(request)))
+                .andExpect(status().isOk());
+    }
+}

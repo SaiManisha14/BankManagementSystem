@@ -1,0 +1,8 @@
+package com.bank.gateway.config;
+
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class CorsConfig {
+    // CORS configured in GatewayConfig
+}

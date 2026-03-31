@@ -1,0 +1,149 @@
+package com.bank.transaction.service;
+
+import com.bank.transaction.client.AccountClient;
+import com.bank.transaction.dto.TransactionDTO;
+import com.bank.transaction.dto.TransferDTO;
+import com.bank.transaction.entity.Transaction;
+import com.bank.transaction.exception.BadRequestException;
+import com.bank.transaction.exception.ResourceNotFoundException;
+import com.bank.transaction.exception.UnauthorizedException;
+import com.bank.transaction.repository.TransactionRepository;
+import com.bank.transaction.util.ValidationUtil;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.util.*;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class TransactionService {
+
+    private final TransactionRepository transactionRepository;
+    private final AccountClient accountClient;
+
+    // ==========================
+    // GETTERS
+    // ==========================
+    public List<Transaction> getAllTransactions() {
+        log.info("Fetching all transactions");
+        return transactionRepository.findAll();
+    }
+
+    public List<Transaction> getTransactionsByAccountId(Long accountId) {
+        log.info("Fetching transactions for account: {}", accountId);
+
+        ValidationUtil.validateNotNull(accountId, "Account ID");
+
+        List<Transaction> list = transactionRepository.findByAccountId(accountId);
+        if (list.isEmpty()) {
+            throw new ResourceNotFoundException("No transactions found for account: " + accountId);
+        }
+        return list;
+    }
+
+    // ==========================
+    // DEPOSIT
+    // ==========================
+    public Transaction deposit(Long accountId, BigDecimal amount) {
+        log.info("Deposit {} into account {}", amount, accountId);
+
+        ValidationUtil.validateNotNull(accountId, "Account ID");
+        ValidationUtil.validateAmount(amount);
+
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("amount", amount);
+            body.put("operation", "CREDIT");   // FINAL WORKING VALUE
+
+            accountClient.updateBalance(accountId, body);
+
+            Transaction txn = new Transaction();
+            txn.setAccountId(accountId);
+            txn.setAmount(amount);
+            txn.setType("DEPOSIT");
+            txn.setTimestamp(LocalDateTime.now());
+            return transactionRepository.save(txn);
+
+        } catch (Exception ex) {
+            log.error("Deposit failed: {}", ex.getMessage(), ex);
+            throw new BadRequestException("Deposit transaction failed: " + ex.getMessage());
+        }
+    }
+
+    // ==========================
+    // WITHDRAW
+    // ==========================
+    public Transaction withdraw(Long accountId, BigDecimal amount) {
+        log.info("Withdraw {} from account {}", amount, accountId);
+
+        ValidationUtil.validateNotNull(accountId, "Account ID");
+        ValidationUtil.validateAmount(amount);
+
+        try {
+            Map<String, Object> body = new HashMap<>();
+            body.put("amount", amount);
+            body.put("operation", "DEBIT");   // FINAL WORKING VALUE
+
+            accountClient.updateBalance(accountId, body);
+
+            Transaction txn = new Transaction();
+            txn.setAccountId(accountId);
+            txn.setAmount(amount);
+            txn.setType("WITHDRAW");
+            txn.setTimestamp(LocalDateTime.now());
+            return transactionRepository.save(txn);
+
+        } catch (Exception ex) {
+            log.error("Withdrawal failed: {}", ex.getMessage(), ex);
+            throw new BadRequestException("Withdrawal transaction failed: " + ex.getMessage());
+        }
+    }
+
+    // ==========================
+    // TRANSFER
+    // ==========================
+    public Transaction transfer(Long fromId, Long toId, BigDecimal amount) {
+        log.info("Transfer {} from {} → {}", amount, fromId, toId);
+
+        ValidationUtil.validateNotNull(fromId, "Source Account");
+        ValidationUtil.validateNotNull(toId, "Destination Account");
+        ValidationUtil.validateAmount(amount);
+
+        if (fromId.equals(toId)) {
+            throw new BadRequestException("Source and destination cannot be the same");
+        }
+
+        try {
+            // First: DEBIT from source
+            Map<String, Object> bodyDebit = new HashMap<>();
+            bodyDebit.put("amount", amount);
+            bodyDebit.put("operation", "DEBIT");
+
+            accountClient.updateBalance(fromId, bodyDebit);
+
+            // Then: CREDIT to target
+            Map<String, Object> bodyCredit = new HashMap<>();
+            bodyCredit.put("amount", amount);
+            bodyCredit.put("operation", "CREDIT");
+
+            accountClient.updateBalance(toId, bodyCredit);
+
+            // Save transaction record
+            Transaction txn = new Transaction();
+            txn.setAccountId(fromId);
+            txn.setAmount(amount);
+            txn.setType("TRANSFER");
+            txn.setDescription("Transferred to account " + toId);
+            txn.setTimestamp(LocalDateTime.now());
+            return transactionRepository.save(txn);
+
+        } catch (Exception ex) {
+            log.error("Transfer failed: {}", ex.getMessage(), ex);
+            throw new BadRequestException("Transfer transaction failed: " + ex.getMessage());
+        }
+    }
+}

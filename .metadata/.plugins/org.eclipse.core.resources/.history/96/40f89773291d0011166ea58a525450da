@@ -1,0 +1,75 @@
+package com.bank.gateway.filter;
+
+import com.bank.gateway.util.JwtUtil;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.gateway.filter.GatewayFilter;
+import org.springframework.cloud.gateway.filter.factory.AbstractGatewayFilterFactory;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.web.server.ServerWebExchange;
+import reactor.core.publisher.Mono;
+
+import java.util.List;
+@Component
+@Slf4j
+public class JwtAuthenticationFilter extends AbstractGatewayFilterFactory<JwtAuthenticationFilter.Config> {
+
+    @Autowired
+    private JwtUtil jwtUtil;
+
+    public JwtAuthenticationFilter() {
+        super(Config.class);
+    }
+
+    @Override
+    public GatewayFilter apply(Config config) {
+        return (exchange, chain) -> {
+
+            String path = exchange.getRequest().getURI().getPath();
+            log.info("Request path: {}", path);
+
+            // 🔥 Allow login/register/validate without JWT
+            if (path.startsWith("/api/auth/")) {
+                return chain.filter(exchange);
+            }
+
+            String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.Authorization);
+
+            if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+                log.error("Missing or invalid Authorization header");
+                return onError(exchange, HttpStatus.UNAUTHORIZED);
+            }
+
+            String token = authHeader.substring(7);
+
+            try {
+                if (!jwtUtil.validateToken(token)) {
+                    return onError(exchange, HttpStatus.UNAUTHORIZED);
+                }
+
+                String username = jwtUtil.extractUsername(token);
+                List<String> roles = jwtUtil.extractRoles(token);
+
+                ServerWebExchange modifiedExchange = exchange.mutate()
+                        .request(builder -> builder
+                                .header("X-User-Name", username)
+                                .header("X-User-Roles", String.join(",", roles)))
+                        .build();
+
+                return chain.filter(modifiedExchange);
+
+            } catch (Exception e) {
+                return onError(exchange, HttpStatus.UNAUTHORIZED);
+            }
+        };
+    }
+
+    private Mono<Void> onError(ServerWebExchange exchange, HttpStatus status) {
+        exchange.getResponse().setStatusCode(status);
+        return exchange.getResponse().setComplete();
+    }
+
+    public static class Config { }
+}

@@ -1,0 +1,124 @@
+package com.bank.account.service;
+
+import com.bank.account.entity.Account;
+import com.bank.account.entity.AccountType;
+import com.bank.account.repository.AccountRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.math.BigDecimal;
+import java.util.List;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+@ExtendWith(MockitoExtension.class)
+class AccountServiceTest {
+
+    @Mock
+    private AccountRepository accountRepository;
+
+    @InjectMocks
+    private AccountService accountService;
+
+    private Account newAccount;      // unsaved
+    private Account savedAccount;    // saved with id
+
+    @BeforeEach
+    void setUp() {
+        newAccount = Account.builder()
+                .accountId(null)
+                .userId(1L)
+                .accountType(AccountType.SAVINGS)
+                .balance(new BigDecimal("5000.00"))
+                .build();
+
+        savedAccount = Account.builder()
+                .accountId(1L)
+                .userId(1L)
+                .accountType(AccountType.SAVINGS)
+                .balance(new BigDecimal("5000.00"))
+                .build();
+    }
+
+    @Test
+    void testCreateAccount() {
+        when(accountRepository.save(any(Account.class))).thenReturn(savedAccount);
+
+        Account result = accountService.createAccount(newAccount);
+
+        assertNotNull(result);
+        assertEquals(1L, result.getAccountId());
+        assertEquals(AccountType.SAVINGS, result.getAccountType());
+        assertEquals(new BigDecimal("5000.00"), result.getBalance());
+
+        verify(accountRepository, times(1)).save(newAccount);
+    }
+
+    @Test
+    void testGetAccountById() {
+        when(accountRepository.findById(1L)).thenReturn(Optional.of(savedAccount));
+
+        Account result = accountService.getAccountById(1L);
+
+        assertNotNull(result);
+        assertEquals(1L, result.getAccountId());
+        assertEquals(AccountType.SAVINGS, result.getAccountType());
+    }
+
+    @Test
+    void testGetAllAccounts() {
+        when(accountRepository.findAll()).thenReturn(List.of(savedAccount));
+
+        List<Account> result = accountService.getAllAccounts();
+
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        assertEquals(1L, result.get(0).getAccountId());
+    }
+
+    @Test
+    void testUpdateBalance_Add() {
+        // Start with 5000.00, add 1000.00 => 6000.00
+        Account mutable = copy(savedAccount);
+        when(accountRepository.findById(1L)).thenReturn(Optional.of(mutable));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Account result = accountService.updateBalance(1L, "ADD", 1000.0);
+
+        assertNotNull(result);
+        assertEquals(new BigDecimal("6000.00"), result.getBalance());
+        verify(accountRepository).save(mutable);
+    }
+
+    @Test
+    void testUpdateBalance_Subtract() {
+        // Start with 5000.00, subtract 500.00 => 4500.00
+        Account mutable = copy(savedAccount);
+        when(accountRepository.findById(1L)).thenReturn(Optional.of(mutable));
+        when(accountRepository.save(any(Account.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Account result = accountService.updateBalance(1L, "SUBTRACT", 500.0);
+
+        assertNotNull(result);
+        assertEquals(new BigDecimal("4500.00"), result.getBalance());
+        verify(accountRepository).save(mutable);
+    }
+
+    // --- helpers ---
+
+    private static Account copy(Account a) {
+        return Account.builder()
+                .accountId(a.getAccountId())
+                .userId(a.getUserId())
+                .accountType(a.getAccountType())
+                .balance(a.getBalance() == null ? null : a.getBalance())
+                .build();
+    }
+}
